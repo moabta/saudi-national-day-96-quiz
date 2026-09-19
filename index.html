@@ -49,6 +49,9 @@
 
 #transfer-banner:not([hidden]){display:block;width:100%;padding:18px 24px;border:2px solid #e9bd57;border-radius:20px;background:#73511b;color:white;text-align:center;font-size:clamp(1.3rem,4vw,2rem);font-weight:900;line-height:1.6;margin-bottom:16px}
 
+.start-panel #main-title{font-size:clamp(2.2rem,5.2vw,4.4rem);font-weight:900;line-height:1.55;gap:14px}
+.start-panel .school{font-size:clamp(1.5rem,3.5vw,2.5rem);font-weight:900;line-height:1.7;border-radius:20px;padding:14px 20px}
+
   </style>
 </head>
 <body>
@@ -81,7 +84,7 @@
           <button id="resume-btn" class="button secondary" type="button">استكمال المسابقة</button>
         </div>
         <button id="start-btn" class="button primary start-button" type="button">ابدئي المسابقة <span>←</span></button>
-        <p class="app-version">الإصدار 9</p>
+        <p class="app-version">الإصدار 10 — انتقال تلقائي ٣٠ / ١٥</p>
       </div>
     </section>
 
@@ -289,6 +292,7 @@ if (typeof document !== 'undefined') {
 
   function playTone(kind = 'click') {
     if (!prefs.effects) return;
+    try {
     audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
     const patterns = { click: [[540,.035]], correct: [[523,.11],[659,.11],[784,.2]], wrong: [[260,.15],[190,.24]], victory: [[392,.12],[523,.12],[659,.12],[784,.3]] };
     let offset = 0;
@@ -300,6 +304,7 @@ if (typeof document !== 'undefined') {
       gain.gain.exponentialRampToValueAtTime(.0001, audioContext.currentTime + offset + duration);
       oscillator.connect(gain).connect(audioContext.destination); oscillator.start(audioContext.currentTime + offset); oscillator.stop(audioContext.currentTime + offset + duration + .02); offset += duration;
     }
+    } catch { /* Sound must never interrupt the quiz or its timer. */ }
   }
 
   function currentQuestion() { return state.tieBreakerIndex >= 0 ? TIE_BREAKERS[state.tieBreakerIndex] : QUESTIONS[state.selectedQuestion]; }
@@ -412,10 +417,14 @@ if (typeof document !== 'undefined') {
     stopTimer(); $('timer').classList.remove('hidden');
     $('timer-label').textContent = `فريق ${state.currentTeam} · ${state.secondChance ? 'الفرصة الثانية — ١٥ ثانية' : 'الفرصة الأولى — ٣٠ ثانية'}`;
     if(state.answered){ $('timer-value').textContent='—'; return; }
-    state.deadline ||= Date.now() + (state.secondChance ? 15000 : 30000); save();
+    if (!Number.isFinite(state.deadline) || state.deadline <= 0) state.deadline = Date.now() + (state.secondChance ? 15000 : 30000);
+    save();
     const tick=()=>{ timeLeft=Math.max(0,Math.ceil((state.deadline-Date.now())/1000)); $('timer-value').textContent=timeLeft.toLocaleString('ar-SA'); $('timer').classList.toggle('urgent',timeLeft<=5); if(timeLeft<=0)handleTimeout(); };
     timerId=setInterval(tick,200); tick();
   }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && $('question-screen').classList.contains('active') && !state.answered && !state.notice) startTimer();
+  });
   function stopTimer(){ if(timerId)clearInterval(timerId);timerId=null }
 
   function startNew() { stopTimer(); state = createInitialState(); showScreen('board-screen'); renderBoard(); }
