@@ -47,6 +47,8 @@
 #banner-answer{background:#ffffff14;border-radius:16px;padding:16px}
 #banner-continue{margin-top:16px;min-width:180px;min-height:56px;font-size:1.4rem;cursor:pointer}
 
+#transfer-banner:not([hidden]){display:block;width:100%;padding:18px 24px;border:2px solid #e9bd57;border-radius:20px;background:#73511b;color:white;text-align:center;font-size:clamp(1.3rem,4vw,2rem);font-weight:900;line-height:1.6;margin-bottom:16px}
+
   </style>
 </head>
 <body>
@@ -106,6 +108,7 @@
     </section>
 
     <section id="question-screen" class="screen game-screen" aria-label="صفحة السؤال">
+      <div id="transfer-banner" role="status" hidden></div>
       <div class="question-score-strip"><span id="question-team">فريق A</span><strong id="question-score">0 درجة</strong><span>قيمة السؤال: 10 درجات</span></div>
       <div class="turn-pill" id="question-turn-pill">السؤال المختار: 1</div>
       <article class="question-card">
@@ -305,6 +308,7 @@ if (typeof document !== 'undefined') {
     $('score-b').value = state.scores.B; $('score-b').textContent = state.scores.B;
     $('team-a-card').classList.toggle('active-team', state.currentTeam === 'A'); $('team-b-card').classList.toggle('active-team', state.currentTeam === 'B');
     $('turn-pill').textContent = `الدور الآن: فريق ${state.currentTeam} — اخترن رقم السؤال`;
+    $('transfer-banner').hidden = true;
     const completed = Object.keys(state.usedQuestions).length;
     $('round-label').textContent = `${completed} من ${QUESTIONS.length} أسئلة مكتملة`;
     $('progress-bar').style.width = `${(completed / QUESTIONS.length) * 100}%`;
@@ -322,6 +326,8 @@ if (typeof document !== 'undefined') {
   function renderQuestion() {
     const q = currentQuestion(); if (!q) return;
     const tie = state.tieBreakerIndex >= 0;
+    $('transfer-banner').hidden = !state.secondChance || state.answered;
+    $('transfer-banner').textContent = `انتهى الوقت — تم انتقال السؤال تلقائيًا إلى فريق ${state.currentTeam} · ١٥ ثانية للإجابة`;
     $('question-team').textContent = `فريق ${state.currentTeam}`;
     $('question-score').textContent = `${state.scores[state.currentTeam]} درجة`;
     $('question-turn-pill').textContent = tie ? `سؤال الحسم ${state.tieBreakerIndex + 1}` : `السؤال المختار: ${state.selectedQuestion + 1}`;
@@ -330,11 +336,11 @@ if (typeof document !== 'undefined') {
     $('answers').replaceChildren(...q.options.map((option, index) => {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'answer'; button.dataset.index = index;
       button.innerHTML = `<span class="letter">${['أ','ب','ج','د'][index]}</span><span>${option}</span>`;
-      if (state.answered) { button.disabled = true; if (index === q.correctIndex) button.classList.add('correct'); if (index === state.selectedIndex && index !== q.correctIndex) button.classList.add('wrong'); }
+      if (state.answered) { button.disabled = true; if (index === state.selectedIndex && index !== q.correctIndex) button.classList.add('wrong'); }
       button.addEventListener('click', () => choose(index)); return button;
     }));
     const feedback = $('feedback'); feedback.className = 'feedback'; feedback.textContent = '';
-    if (state.answered) { feedback.classList.add(state.lastAnswerCorrect ? 'success' : 'error'); feedback.textContent = `${state.lastAnswerCorrect ? 'أحسنتم، إجابة صحيحة!' : 'إجابة غير صحيحة.'} ${q.fact}`; }
+    if (state.answered) { feedback.classList.add(state.lastAnswerCorrect ? 'success' : 'error'); feedback.textContent = `${state.lastAnswerCorrect ? 'أحسنتم، إجابة صحيحة!' : 'إجابة غير صحيحة.'}`; }
     $('board-btn').disabled = !state.answered; $('board-btn').textContent = tie ? (getWinner(state) ? 'عرض الشهادة ←' : 'سؤال الحسم التالي ←') : (Object.keys(state.usedQuestions).length === QUESTIONS.length ? 'عرض النتيجة النهائية ←' : 'العودة إلى لوحة الأسئلة ←');
     $('undo-btn').disabled = !state.history.length;
     save();
@@ -343,15 +349,15 @@ if (typeof document !== 'undefined') {
   function openQuestion(index) { const nextState = selectQuestion(state, index); if (nextState === state) return; state = nextState; playTone('click'); showScreen('question-screen'); renderQuestion(); startTimer(); }
 
   function showAnswerBanner(kind) {
+    if (kind === 'transfer') { state.notice = null; renderQuestion(); startTimer(); return; }
     stopTimer(); state.notice = kind; save();
-    const q = currentQuestion();
     const banner = $('answer-banner');
     banner.dataset.kind = kind;
     $('banner-team').textContent = `فريق ${state.currentTeam}`;
     $('banner-title').textContent = kind === 'transfer' ? 'انتهى الوقت' : kind === 'correct' ? 'إجابة صحيحة، أحسنتم' : kind === 'expired' ? 'انتهى وقت الفريقين' : 'إجابة خاطئة، حظ أوفر في المرات القادمة';
     $('banner-message').textContent = kind === 'transfer' ? `تم انتقال السؤال إلى فريق ${state.currentTeam} — لديكن ١٥ ثانية بعد الضغط على متابعة` : kind === 'correct' ? 'أضيفت ١٠ درجات إلى رصيد الفريق' : kind === 'expired' ? 'لا نقاط لهذا السؤال' : 'واصِلن المحاولة بثقة وحماس';
-    $('banner-answer').textContent = kind === 'transfer' ? '' : `الإجابة الصحيحة: ${q.options[q.correctIndex]}`;
-    $('banner-answer').hidden = kind === 'transfer';
+    $('banner-answer').textContent = '';
+    $('banner-answer').hidden = true;
     $('timer-value').textContent = kind === 'transfer' ? '١٥' : '—';
     $('timer-label').textContent = `فريق ${state.currentTeam} · الوقت متوقف`;
     $('timer').classList.remove('urgent');
@@ -398,7 +404,8 @@ if (typeof document !== 'undefined') {
     if (state.answered) return;
     state = expireQuestion(state);
     renderQuestion();
-    showAnswerBanner(state.answered ? 'expired' : 'transfer');
+    if (state.answered) showAnswerBanner('expired');
+    else { state.notice = null; startTimer(); }
     playTone('wrong');
   }
   function startTimer(){
