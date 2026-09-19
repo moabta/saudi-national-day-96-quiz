@@ -33,6 +33,7 @@
 .start-panel .start-options{display:flex;justify-content:center}.start-panel .app-version{margin:1rem 0 0;color:rgba(255,255,255,.55);font-size:.75rem}
 @media(max-width:760px){.start-screen{padding:8px}.start-panel{padding:30px 16px 20px;border-radius:26px}.start-panel:before{inset:7px;border-radius:20px}.start-panel .start-emblem{width:74px;height:74px;font-size:2.25rem}.start-panel .slogan{font-size:2.7rem}.start-panel .school{font-size:.92rem;padding:8px 12px}.start-panel .resume-box{flex-direction:column}}
 @media print{body{background:#fff}.topbar,.pattern,#start-screen,#board-screen,#question-screen,.result-actions,.loser-message,.confetti{display:none!important}main{padding:0;max-width:none}#result-screen{display:flex!important;min-height:100vh}.certificate{width:100%;box-shadow:none}.certificate-frame{min-height:180mm;display:flex;flex-direction:column;justify-content:center}@page{size:A4 landscape;margin:8mm}}
+.question-countdown{display:flex;flex-direction:column;align-items:center;gap:4px;margin:0 auto 12px;width:min(520px,100%);padding:14px 24px;border:2px solid var(--gold);border-radius:24px;background:rgba(0,0,0,.2);color:var(--gold-light);text-align:center}.question-countdown strong{font-size:clamp(4rem,12vw,6rem);line-height:1.1;font-variant-numeric:tabular-nums;color:var(--gold)}.question-countdown.urgent{border-color:#ffaaa3;background:#702e2e}.question-countdown.urgent strong{color:#fff}
 
   </style>
 </head>
@@ -59,7 +60,7 @@
         <h1 id="main-title"><span>نوال دخيل الله التميمي</span><span class="teacher-divider">و</span><span>عزيزة ناصر الجهني</span></h1>
         <p class="school">لطالبات المدرسة المتوسطة الحادية والسبعين</p>
         <div class="start-options">
-          <label class="timer-option"><input id="timer-enabled" type="checkbox"><span>مؤقت 30 ثانية لكل سؤال</span></label>
+          <p>٣٠ ثانية للإجابة، ثم ١٥ ثانية للفريق الآخر عند انتهاء الوقت</p>
         </div>
         <div id="resume-box" class="resume-box hidden">
           <p>توجد مسابقة لم تكتمل.</p>
@@ -79,7 +80,6 @@
         <div class="round-info">
           <span id="round-label">اخترن رقم السؤال</span>
           <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
-          <div id="timer" class="timer hidden" aria-label="الوقت المتبقي"><span id="timer-value">30</span></div>
         </div>
         <article class="team-card team-b" id="team-b-card">
           <span class="team-label">فريق</span><strong>ب</strong>
@@ -105,6 +105,10 @@
       <div class="game-actions">
         <button id="undo-btn" class="button ghost" type="button" disabled>↶ تراجع</button>
         <button id="board-btn" class="button primary" type="button" disabled>العودة إلى لوحة الأسئلة ←</button>
+      </div>
+      <div id="timer" class="question-countdown" role="timer" aria-label="الوقت المتبقي">
+        <span id="timer-label">الفرصة الأولى — ٣٠ ثانية</span>
+        <strong id="timer-value">٣٠</strong><span>ثانية متبقية</span>
       </div>
     </section>
 
@@ -165,7 +169,13 @@ function createInitialState() {
 
 function selectQuestion(state, questionIndex) {
   if (state.selectedQuestion !== null || state.usedQuestions[questionIndex] || !QUESTIONS[questionIndex]) return state;
-  return { ...state, selectedQuestion: questionIndex, answered: false, selectedIndex: null, lastAnswerCorrect: null };
+  return { ...state, selectedQuestion: questionIndex, originalTeam: state.currentTeam, secondChance: false, deadline: null, history: [], answered: false, selectedIndex: null, lastAnswerCorrect: null };
+}
+
+function expireQuestion(state) {
+  if (state.answered || (state.selectedQuestion === null && state.tieBreakerIndex < 0)) return state;
+  if (!state.secondChance) return { ...state, originalTeam: state.originalTeam || state.currentTeam, currentTeam: state.currentTeam === 'A' ? 'B' : 'A', secondChance: true, deadline: null, history: [] };
+  return { ...answerQuestion(state, -1), deadline: null, history: [] };
 }
 
 function answerQuestion(state, optionIndex, question = state.tieBreakerIndex >= 0 ? TIE_BREAKERS[state.tieBreakerIndex] : QUESTIONS[state.selectedQuestion]) {
@@ -177,7 +187,7 @@ function answerQuestion(state, optionIndex, question = state.tieBreakerIndex >= 
 
 function returnToBoard(state) {
   if (!state.answered) return state;
-  return { ...state, selectedQuestion: null, currentTeam: state.currentTeam === 'A' ? 'B' : 'A', answered: false, selectedIndex: null, lastAnswerCorrect: null };
+  return { ...state, selectedQuestion: null, currentTeam: (state.originalTeam || state.currentTeam) === 'A' ? 'B' : 'A', originalTeam: null, secondChance: false, deadline: null, answered: false, selectedIndex: null, lastAnswerCorrect: null };
 }
 
 function adjustScore(state, team, delta) {
@@ -200,7 +210,8 @@ function advanceAfterAnswer(state) {
       state: {
         ...state,
         tieBreakerIndex: (state.tieBreakerIndex + 1) % TIE_BREAKERS.length,
-        currentTeam: state.currentTeam === 'A' ? 'B' : 'A',
+        currentTeam: (state.originalTeam || state.currentTeam) === 'A' ? 'B' : 'A',
+        originalTeam: null, secondChance: false, deadline: null, history: [],
         answered: false,
         selectedIndex: null,
         lastAnswerCorrect: null,
@@ -313,11 +324,13 @@ if (typeof document !== 'undefined') {
   function openQuestion(index) { const nextState = selectQuestion(state, index); if (nextState === state) return; state = nextState; playTone('click'); showScreen('question-screen'); renderQuestion(); startTimer(); }
 
   function choose(index) {
+    if (!state.answered && state.deadline && Date.now() >= state.deadline) { handleTimeout(); return; }
     if (state.answered) return; playTone('click'); state = answerQuestion(state, index, currentQuestion()); renderQuestion(); stopTimer();
     setTimeout(() => playTone(state.lastAnswerCorrect ? 'correct' : 'wrong'), 100);
   }
 
   function backToBoard() {
+    stopTimer();
     playTone('click');
     const transition = advanceAfterAnswer(state);
     state = transition.state;
@@ -337,21 +350,37 @@ if (typeof document !== 'undefined') {
   }
 
   function createConfetti() { const box = $('confetti'); box.replaceChildren(); for (let i=0;i<70;i++){const p=document.createElement('i');p.style.left=`${Math.random()*100}%`;p.style.background=['#e9bd57','#fff','#12a56b'][i%3];p.style.setProperty('--drift',`${Math.random()*180-90}px`);p.style.animationDelay=`${Math.random()*1.2}s`;box.append(p);} }
-  function startTimer(){ stopTimer(); if(!prefs.timer){$('timer').classList.add('hidden');return} timeLeft=30;$('timer-value').textContent=timeLeft;$('timer').classList.remove('hidden');timerId=setInterval(()=>{timeLeft--;$('timer-value').textContent=timeLeft;if(timeLeft<=0){stopTimer();toast('انتهى الوقت')}},1000) }
+  function handleTimeout() {
+    stopTimer();
+    if (state.answered) return;
+    state = expireQuestion(state);
+    if (state.answered) { backToBoard(); toast('انتهت فرصتا الفريقين — لا نقاط لهذا السؤال'); return; }
+    renderQuestion(); startTimer();
+    toast(`انتقل السؤال إلى فريق ${state.currentTeam === 'A' ? 'أ' : 'ب'} — ١٥ ثانية`);
+    playTone('wrong');
+  }
+  function startTimer(){
+    stopTimer(); $('timer').classList.remove('hidden');
+    $('timer-label').textContent = `فريق ${state.currentTeam === 'A' ? 'أ' : 'ب'} · ${state.secondChance ? 'الفرصة الثانية — ١٥ ثانية' : 'الفرصة الأولى — ٣٠ ثانية'}`;
+    if(state.answered){ $('timer-value').textContent='—'; return; }
+    state.deadline ||= Date.now() + (state.secondChance ? 15000 : 30000); save();
+    const tick=()=>{ timeLeft=Math.max(0,Math.ceil((state.deadline-Date.now())/1000)); $('timer-value').textContent=timeLeft.toLocaleString('ar-SA'); $('timer').classList.toggle('urgent',timeLeft<=5); if(timeLeft<=0)handleTimeout(); };
+    timerId=setInterval(tick,200); tick();
+  }
   function stopTimer(){ if(timerId)clearInterval(timerId);timerId=null }
 
-  function startNew() { state = createInitialState(); prefs.timer = $('timer-enabled').checked; showScreen('board-screen'); renderBoard(); }
+  function startNew() { stopTimer(); state = createInitialState(); showScreen('board-screen'); renderBoard(); }
   function resetGame() { if (confirm('هل تريدين بدء مسابقة جديدة؟ ستُمسح النتيجة الحالية.')) { localStorage.removeItem(STORAGE_KEY); state=createInitialState(); stopTimer(); showScreen('start-screen'); } }
 
   $('start-btn').addEventListener('click', startNew); $('board-btn').addEventListener('click', backToBoard); $('reset-btn').addEventListener('click', resetGame); $('play-again-btn').addEventListener('click', resetGame); $('print-btn').addEventListener('click', () => window.print());
   $('fullscreen-btn').addEventListener('click', () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(()=>toast('تعذر تشغيل ملء الشاشة')));
   $('settings-btn').addEventListener('click', () => $('audio-dialog').showModal());
   for (const [id,key] of [['effects-toggle','effects']]) { $(id).checked=prefs[key]; $(id).addEventListener('change',(e)=>{prefs=updatePreference(prefs,key,e.target.checked);save()}); }
-  $('undo-btn').addEventListener('click',()=>{if(!state.history.length)return;state=state.history.at(-1);renderQuestion();startTimer();toast('تم التراجع عن الإجابة')});
+  $('undo-btn').addEventListener('click',()=>{if(!state.history.length)return;state={...state.history.at(-1),deadline:null};renderQuestion();startTimer();toast('تم التراجع عن الإجابة')});
   document.addEventListener('keydown',(event)=>{if(!$('question-screen').classList.contains('active'))return;if(['1','2','3','4'].includes(event.key)&&!state.answered)choose(Number(event.key)-1);if(event.key==='Enter'&&state.answered)backToBoard()});
 
   const saved = readJSON(STORAGE_KEY);
-  if (saved.currentTeam && !saved.finished) { $('resume-box').classList.remove('hidden'); $('resume-btn').addEventListener('click',()=>{state={...createInitialState(),...saved};showScreen(state.selectedQuestion !== null || state.tieBreakerIndex >= 0 ? 'question-screen' : 'board-screen');state.selectedQuestion !== null || state.tieBreakerIndex >= 0 ? renderQuestion() : renderBoard()}); }
+  if (saved.currentTeam && !saved.finished) { $('resume-box').classList.remove('hidden'); $('resume-btn').addEventListener('click',()=>{state={...createInitialState(),...saved};const inQuestion=state.selectedQuestion !== null || state.tieBreakerIndex >= 0;showScreen(inQuestion ? 'question-screen' : 'board-screen');if(inQuestion){renderQuestion();startTimer();}else renderBoard();}); }
 }
 
   </script>
